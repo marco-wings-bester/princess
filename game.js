@@ -4,6 +4,12 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx    = canvas.getContext('2d');
 
+// ── Background image ───────────────────────────────────────────────────────────
+const bgImg = new Image();
+bgImg.src = 'bg.png';
+let bgReady = false;
+bgImg.onload = () => { bgReady = true; };
+
 // ── Grid ───────────────────────────────────────────────────────────────────────
 const COLS = 9;
 const ROWS = 9;
@@ -93,16 +99,6 @@ const tileMap = (() => {
     return m;
 })();
 
-// Deterministic per-tile seeds for decorations (no Math.random at runtime)
-const SEED = Array.from({ length: ROWS }, (_, r) =>
-    Array.from({ length: COLS }, (_, c) => ((r * 97 + c * 61 + 13) % 100) / 100)
-);
-
-// Tile colour palettes: top face, left wall, right wall
-const PAL = {
-    0: { top: '#c8a06a', left: '#7a5530', right: '#9a6e3a' },   // sand
-    1: { top: '#a07848', left: '#5c3820', right: '#7a5030' },   // dirt path
-};
 
 // ── Player ─────────────────────────────────────────────────────────────────────
 const player = {
@@ -123,12 +119,23 @@ let pulseT     = 0;         // drives target-marker pulse animation
 // ── Drawing helpers ────────────────────────────────────────────────────────────
 
 function drawBackground() {
-    const g = ctx.createLinearGradient(0, 0, 0, canvas.height);
-    g.addColorStop(0, '#d4956a');
-    g.addColorStop(0.5, '#a06030');
-    g.addColorStop(1, '#1a0e06');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    if (bgReady) {
+        // Cover the canvas, preserving image aspect ratio (cover behaviour)
+        const cw = canvas.width, ch = canvas.height;
+        const iw = bgImg.naturalWidth, ih = bgImg.naturalHeight;
+        const scale = Math.max(cw / iw, ch / ih);
+        const dw = iw * scale, dh = ih * scale;
+        const dx = (cw - dw) * 0.5, dy = (ch - dh) * 0.5;
+        ctx.drawImage(bgImg, dx, dy, dw, dh);
+    } else {
+        // Fallback while image loads
+        const g = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        g.addColorStop(0, '#d4956a');
+        g.addColorStop(0.5, '#a06030');
+        g.addColorStop(1, '#1a0e06');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
 }
 
 /**
@@ -148,112 +155,38 @@ function drawBackground() {
  */
 function drawTile(col, row, highlight) {
     const { x, y } = gridToScreen(col, row);
-    const hw  = TW * 0.5;
-    const hh  = TH * 0.5;
-    const sw  = TH * 0.5;    // side wall height
-    const pal = PAL[tileMap[row][col]] ?? PAL[0];
+    const hw = TW * 0.5;
+    const hh = TH * 0.5;
 
-    const topColor   = highlight ? '#ddc070' : pal.top;
-    const leftColor  = highlight ? '#a08828' : pal.left;
-    const rightColor = highlight ? '#bfa030' : pal.right;
-
-    // ── Left wall ─────────────────────────────────────────────────────────────
-    ctx.beginPath();
-    ctx.moveTo(x - hw, y + hh);
-    ctx.lineTo(x,      y + TH);
-    ctx.lineTo(x,      y + TH + sw);
-    ctx.lineTo(x - hw, y + hh + sw);
-    ctx.closePath();
-    ctx.fillStyle   = leftColor;
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(0,0,0,0.15)';
-    ctx.lineWidth   = 0.5;
-    ctx.stroke();
-
-    // ── Right wall ────────────────────────────────────────────────────────────
-    ctx.beginPath();
-    ctx.moveTo(x + hw, y + hh);
-    ctx.lineTo(x,      y + TH);
-    ctx.lineTo(x,      y + TH + sw);
-    ctx.lineTo(x + hw, y + hh + sw);
-    ctx.closePath();
-    ctx.fillStyle   = rightColor;
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(0,0,0,0.15)';
-    ctx.lineWidth   = 0.5;
-    ctx.stroke();
-
-    // ── Top face (drawn last — caps the walls cleanly) ────────────────────────
-    ctx.beginPath();
-    ctx.moveTo(x,       y);
-    ctx.lineTo(x + hw,  y + hh);
-    ctx.lineTo(x,       y + TH);
-    ctx.lineTo(x - hw,  y + hh);
-    ctx.closePath();
-    ctx.fillStyle   = topColor;
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(0,0,0,0.18)';
-    ctx.lineWidth   = 0.5;
-    ctx.stroke();
+    if (highlight) {
+        // Highlighted tile: opaque golden overlay so hover is always visible
+        ctx.beginPath();
+        ctx.moveTo(x,      y);
+        ctx.lineTo(x + hw, y + hh);
+        ctx.lineTo(x,      y + TH);
+        ctx.lineTo(x - hw, y + hh);
+        ctx.closePath();
+        ctx.fillStyle   = 'rgba(255, 220, 80, 0.30)';
+        ctx.strokeStyle = 'rgba(255, 200, 60, 0.75)';
+        ctx.lineWidth   = 1.5;
+        ctx.fill();
+        ctx.stroke();
+    } else {
+        // Normal tile: just a faint grid outline so the background image shows through
+        ctx.beginPath();
+        ctx.moveTo(x,      y);
+        ctx.lineTo(x + hw, y + hh);
+        ctx.lineTo(x,      y + TH);
+        ctx.lineTo(x - hw, y + hh);
+        ctx.closePath();
+        ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+        ctx.lineWidth   = 0.8;
+        ctx.stroke();
+    }
 }
 
-/** Deterministic tile decorations (rocks, tufts, cactus). */
-function drawTileDetail(col, row) {
-    const s = SEED[row][col];
-    const t = tileMap[row][col];
-
-    // Skip path tiles and the player's current tile
-    if (t === 1) return;
-    if (col === player.col && row === player.row) return;
-
-    const { x, y } = gridToScreen(col, row);
-
-    if (s > 0.76) {
-        // Small rock
-        const rx = x + (s * 2 - 1) * TW * 0.22;
-        const ry = y + TH * 0.48 + s * TH * 0.18;
-        ctx.fillStyle = '#8a7050';
-        ctx.beginPath();
-        ctx.ellipse(rx, ry, TW * 0.07, TH * 0.065, 0.4, 0, Math.PI * 2);
-        ctx.fill();
-    } else if (s < 0.13) {
-        // Tiny cactus
-        const cx = x + (s * 10 - 0.6) * TW * 0.09;
-        const cy = y + TH * 0.52;
-        const cw  = Math.max(0.8, TW * 0.022);
-        ctx.strokeStyle = '#5a8838';
-        ctx.lineWidth   = cw;
-        ctx.lineCap     = 'round';
-        // Stem
-        ctx.beginPath();
-        ctx.moveTo(cx, cy);
-        ctx.lineTo(cx, cy - TH * 0.44);
-        ctx.stroke();
-        // Left arm
-        ctx.beginPath();
-        ctx.moveTo(cx, cy - TH * 0.28);
-        ctx.lineTo(cx - TW * 0.07, cy - TH * 0.40);
-        ctx.stroke();
-        // Right arm
-        ctx.beginPath();
-        ctx.moveTo(cx, cy - TH * 0.18);
-        ctx.lineTo(cx + TW * 0.065, cy - TH * 0.30);
-        ctx.stroke();
-    } else if (s > 0.60 && s < 0.67) {
-        // Dry grass tufts
-        const gx = x + (s - 0.6) * TW * 1.4 - TW * 0.06;
-        const gy = y + TH * 0.5 + s * TH * 0.1;
-        ctx.strokeStyle = '#9a8050';
-        ctx.lineWidth   = Math.max(0.5, TW * 0.015);
-        ctx.lineCap     = 'round';
-        for (let i = -1; i <= 1; i++) {
-            ctx.beginPath();
-            ctx.moveTo(gx + i * TW * 0.025, gy);
-            ctx.lineTo(gx + i * TW * 0.04 + (i - 0.5) * TW * 0.03,
-                       gy - TH * 0.28);
-            ctx.stroke();
-        }
-    }
+function drawTileDetail(_col, _row) {
+    // Background image provides all ground detail; nothing extra needed.
 }
 
 /** Pulsing golden marker on the target tile. */
