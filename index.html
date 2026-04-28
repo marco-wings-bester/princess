@@ -9,389 +9,228 @@
   <title>Desert Frontier</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body {
-      width: 100%; height: 100%;
-      background: #1a0e06;
-      overflow: hidden;
-      touch-action: none;
-      -webkit-tap-highlight-color: transparent;
-      user-select: none;
-    }
-    canvas {
-      display: block;
-      width: 100%; height: 100%;
-      cursor: pointer;
-    }
+    html, body { width:100%; height:100%; background:#1a0e06; overflow:hidden; touch-action:none; -webkit-tap-highlight-color:transparent; user-select:none; }
+    canvas { display:block; width:100%; height:100%; cursor:pointer; }
   </style>
 </head>
 <body>
   <canvas id="gameCanvas"></canvas>
   <script>
 'use strict';
-
 const canvas = document.getElementById('gameCanvas');
-const ctx    = canvas.getContext('2d');
-
-const COLS = 9;
-const ROWS = 9;
-
-let TW = 80;
-let TH = 40;
-let OX = 0;
-let OY = 0;
+const ctx = canvas.getContext('2d');
+const COLS = 9, ROWS = 9;
+let TW = 80, TH = 40, OX = 0, OY = 0;
 
 function gridToScreen(col, row) {
-    return {
-        x: OX + (col - row) * TW * 0.5,
-        y: OY + (col + row) * TH * 0.5,
-    };
+  return { x: OX + (col - row) * TW * 0.5, y: OY + (col + row) * TH * 0.5 };
 }
-
 function screenToGrid(sx, sy) {
-    const rx = sx - OX;
-    const ry = sy - OY;
-    return {
-        col: rx / TW + ry / TH,
-        row: ry / TH - rx / TW,
-    };
+  const rx = sx - OX, ry = sy - OY;
+  return { col: rx / TW + ry / TH, row: ry / TH - rx / TW };
 }
-
 function tileCenter(col, row) {
-    const t = gridToScreen(col, row);
-    return { x: t.x, y: t.y + TH * 0.5 };
+  const t = gridToScreen(col, row);
+  return { x: t.x, y: t.y + TH * 0.5 };
 }
+function inBounds(col, row) { return col >= 0 && col < COLS && row >= 0 && row < ROWS; }
 
-function inBounds(col, row) {
-    return col >= 0 && col < COLS && row >= 0 && row < ROWS;
-}
+const player = { col:4, row:4, targetCol:4, targetRow:4, x:0, y:0, tx:0, ty:0, speed:180, moving:false, bobPhase:0 };
 
 function resize() {
-    canvas.width  = window.innerWidth;
-    canvas.height = window.innerHeight;
-    const fitByW = (canvas.width  - 48) * 2 / (COLS + ROWS - 2);
-    const fitByH = (canvas.height - 96) * 4 / (COLS + ROWS);
-    const raw    = Math.floor(Math.min(fitByW, fitByH));
-    TW = raw % 2 === 0 ? raw : raw - 1;
-    TH = TW >> 1;
-    OX = canvas.width * 0.5;
-    OY = (canvas.height - TH * (COLS + ROWS) * 0.5) * 0.5 + 16;
-    const pc = tileCenter(player.col, player.row);
-    player.x  = pc.x;
-    player.y  = pc.y;
-    const tc = tileCenter(player.targetCol, player.targetRow);
-    player.tx = tc.x;
-    player.ty = tc.y;
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  // Grid height includes side walls (SW = TH*0.5 = TW*0.25)
+  // total height = TW*(COLS+ROWS+1)/4
+  const fitByW = (canvas.width - 48) * 2 / (COLS + ROWS - 2);
+  const fitByH = (canvas.height - 96) * 4 / (COLS + ROWS + 1);
+  const raw = Math.floor(Math.min(fitByW, fitByH));
+  TW = raw % 2 === 0 ? raw : raw - 1;
+  TH = TW >> 1;
+  OX = canvas.width * 0.5;
+  OY = (canvas.height - TH * (COLS + ROWS + 1) * 0.5) * 0.5 + 16;
+  const pc = tileCenter(player.col, player.row);
+  player.x = pc.x; player.y = pc.y;
+  const tc = tileCenter(player.targetCol, player.targetRow);
+  player.tx = tc.x; player.ty = tc.y;
 }
 window.addEventListener('resize', resize);
 
 const tileMap = (() => {
-    const m = Array.from({ length: ROWS }, () => new Uint8Array(COLS));
-    for (let i = 0; i < COLS; i++) m[4][i] = 1;
-    for (let i = 0; i < ROWS; i++) m[i][4] = 1;
-    return m;
+  const m = Array.from({ length: ROWS }, () => new Uint8Array(COLS));
+  for (let i = 0; i < COLS; i++) m[4][i] = 1;
+  for (let i = 0; i < ROWS; i++) m[i][4] = 1;
+  return m;
 })();
 
 const SEED = Array.from({ length: ROWS }, (_, r) =>
-    Array.from({ length: COLS }, (_, c) => ((r * 97 + c * 61 + 13) % 100) / 100)
+  Array.from({ length: COLS }, (_, c) => ((r * 97 + c * 61 + 13) % 100) / 100)
 );
 
+// Tile palettes: top, left wall, right wall
 const PAL = {
-    0: { top: '#c8a06a' },
-    1: { top: '#a07848' },
+  0: { top:'#c8a06a', left:'#7a5530', right:'#9a6e3a' },
+  1: { top:'#a07848', left:'#5c3820', right:'#7a5030' },
 };
 
-const player = {
-    col: 4, row: 4,
-    targetCol: 4, targetRow: 4,
-    x: 0, y: 0,
-    tx: 0, ty: 0,
-    speed: 180,
-    moving: false,
-    bobPhase: 0,
-};
-
-let hoveredCol = -1;
-let hoveredRow = -1;
-let pulseT = 0;
+let hoveredCol = -1, hoveredRow = -1, pulseT = 0;
 
 function drawBackground() {
-    const g = ctx.createLinearGradient(0, 0, 0, canvas.height);
-    g.addColorStop(0, '#d4956a');
-    g.addColorStop(0.5, '#a06030');
-    g.addColorStop(1, '#1a0e06');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const g = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  g.addColorStop(0, '#d4956a'); g.addColorStop(0.5, '#a06030'); g.addColorStop(1, '#1a0e06');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, canvas.width, canvas.height);
 }
 
+/**
+ * Isometric tile: 3 visible faces.
+ * Left wall:  (x-hw, y+hh) → (x, y+TH) → (x, y+TH+sw) → (x-hw, y+hh+sw)
+ * Right wall: (x+hw, y+hh) → (x, y+TH) → (x, y+TH+sw) → (x+hw, y+hh+sw)
+ * Top face:   (x, y) → (x+hw, y+hh) → (x, y+TH) → (x-hw, y+hh)
+ */
 function drawTile(col, row, highlight) {
-    const { x, y } = gridToScreen(col, row);
-    const hw = TW * 0.5;
-    const hh = TH * 0.5;
-    const pal = PAL[tileMap[row][col]] || PAL[0];
-    ctx.beginPath();
-    ctx.moveTo(x,      y);
-    ctx.lineTo(x + hw, y + hh);
-    ctx.lineTo(x,      y + TH);
-    ctx.lineTo(x - hw, y + hh);
-    ctx.closePath();
-    ctx.fillStyle   = highlight ? '#ddc070' : pal.top;
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(0,0,0,0.18)';
-    ctx.lineWidth   = 0.5;
-    ctx.stroke();
+  const { x, y } = gridToScreen(col, row);
+  const hw = TW * 0.5, hh = TH * 0.5, sw = TH * 0.5;
+  const pal = PAL[tileMap[row][col]] || PAL[0];
+  const topC  = highlight ? '#ddc070' : pal.top;
+  const leftC = highlight ? '#a08828' : pal.left;
+  const rightC= highlight ? '#bfa030' : pal.right;
+
+  // Left wall
+  ctx.beginPath();
+  ctx.moveTo(x-hw, y+hh); ctx.lineTo(x, y+TH); ctx.lineTo(x, y+TH+sw); ctx.lineTo(x-hw, y+hh+sw);
+  ctx.closePath(); ctx.fillStyle=leftC; ctx.fill();
+  ctx.strokeStyle='rgba(0,0,0,0.15)'; ctx.lineWidth=0.5; ctx.stroke();
+
+  // Right wall
+  ctx.beginPath();
+  ctx.moveTo(x+hw, y+hh); ctx.lineTo(x, y+TH); ctx.lineTo(x, y+TH+sw); ctx.lineTo(x+hw, y+hh+sw);
+  ctx.closePath(); ctx.fillStyle=rightC; ctx.fill(); ctx.stroke();
+
+  // Top face (drawn last to cap walls)
+  ctx.beginPath();
+  ctx.moveTo(x, y); ctx.lineTo(x+hw, y+hh); ctx.lineTo(x, y+TH); ctx.lineTo(x-hw, y+hh);
+  ctx.closePath(); ctx.fillStyle=topC; ctx.fill();
+  ctx.strokeStyle='rgba(0,0,0,0.18)'; ctx.stroke();
 }
 
 function drawTileDetail(col, row) {
-    const s = SEED[row][col];
-    if (tileMap[row][col] === 1) return;
-    if (col === player.col && row === player.row) return;
-    const { x, y } = gridToScreen(col, row);
-    if (s > 0.76) {
-        const rx = x + (s * 2 - 1) * TW * 0.22;
-        const ry = y + TH * 0.48 + s * TH * 0.18;
-        ctx.fillStyle = '#8a7050';
-        ctx.beginPath();
-        ctx.ellipse(rx, ry, TW * 0.07, TH * 0.065, 0.4, 0, Math.PI * 2);
-        ctx.fill();
-    } else if (s < 0.13) {
-        const cx = x + (s * 10 - 0.6) * TW * 0.09;
-        const cy = y + TH * 0.52;
-        const cw = Math.max(0.8, TW * 0.022);
-        ctx.strokeStyle = '#5a8838';
-        ctx.lineWidth = cw;
-        ctx.lineCap = 'round';
-        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, cy - TH * 0.44); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(cx, cy - TH * 0.28); ctx.lineTo(cx - TW * 0.07, cy - TH * 0.40); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(cx, cy - TH * 0.18); ctx.lineTo(cx + TW * 0.065, cy - TH * 0.30); ctx.stroke();
-    } else if (s > 0.60 && s < 0.67) {
-        const gx = x + (s - 0.6) * TW * 1.4 - TW * 0.06;
-        const gy = y + TH * 0.5 + s * TH * 0.1;
-        ctx.strokeStyle = '#9a8050';
-        ctx.lineWidth = Math.max(0.5, TW * 0.015);
-        ctx.lineCap = 'round';
-        for (let i = -1; i <= 1; i++) {
-            ctx.beginPath();
-            ctx.moveTo(gx + i * TW * 0.025, gy);
-            ctx.lineTo(gx + i * TW * 0.04 + (i - 0.5) * TW * 0.03, gy - TH * 0.28);
-            ctx.stroke();
-        }
-    }
+  const s = SEED[row][col];
+  if (tileMap[row][col]===1 || (col===player.col && row===player.row)) return;
+  const { x, y } = gridToScreen(col, row);
+  if (s > 0.76) {
+    ctx.fillStyle='#8a7050';
+    ctx.beginPath();
+    ctx.ellipse(x+(s*2-1)*TW*0.22, y+TH*0.48+s*TH*0.18, TW*0.07, TH*0.065, 0.4, 0, Math.PI*2);
+    ctx.fill();
+  } else if (s < 0.13) {
+    const cx2=x+(s*10-0.6)*TW*0.09, cy2=y+TH*0.52, cw=Math.max(0.8,TW*0.022);
+    ctx.strokeStyle='#5a8838'; ctx.lineWidth=cw; ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(cx2,cy2); ctx.lineTo(cx2,cy2-TH*0.44); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx2,cy2-TH*0.28); ctx.lineTo(cx2-TW*0.07,cy2-TH*0.40); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx2,cy2-TH*0.18); ctx.lineTo(cx2+TW*0.065,cy2-TH*0.30); ctx.stroke();
+  } else if (s>0.60 && s<0.67) {
+    const gx=x+(s-0.6)*TW*1.4-TW*0.06, gy=y+TH*0.5+s*TH*0.1;
+    ctx.strokeStyle='#9a8050'; ctx.lineWidth=Math.max(0.5,TW*0.015); ctx.lineCap='round';
+    for (let i=-1;i<=1;i++) { ctx.beginPath(); ctx.moveTo(gx+i*TW*0.025,gy); ctx.lineTo(gx+i*TW*0.04+(i-0.5)*TW*0.03,gy-TH*0.28); ctx.stroke(); }
+  }
 }
 
 function drawTargetMarker(col, row) {
-    const { x, y } = gridToScreen(col, row);
-    const hw = TW * 0.5;
-    const hh = TH * 0.5;
-    const alpha = 0.42 + 0.42 * Math.sin(pulseT * 4.5);
-    ctx.beginPath();
-    ctx.moveTo(x,      y);
-    ctx.lineTo(x + hw, y + hh);
-    ctx.lineTo(x,      y + TH);
-    ctx.lineTo(x - hw, y + hh);
-    ctx.closePath();
-    ctx.fillStyle   = `rgba(255,216,48,${alpha * 0.28})`;
-    ctx.strokeStyle = `rgba(255,200,24,${alpha})`;
-    ctx.lineWidth   = 2.5;
-    ctx.fill();
-    ctx.stroke();
+  const { x, y } = gridToScreen(col, row);
+  const hw=TW*0.5, hh=TH*0.5, alpha=0.42+0.42*Math.sin(pulseT*4.5);
+  ctx.beginPath();
+  ctx.moveTo(x,y); ctx.lineTo(x+hw,y+hh); ctx.lineTo(x,y+TH); ctx.lineTo(x-hw,y+hh);
+  ctx.closePath();
+  ctx.fillStyle=`rgba(255,216,48,${alpha*0.28})`; ctx.strokeStyle=`rgba(255,200,24,${alpha})`;
+  ctx.lineWidth=2.5; ctx.fill(); ctx.stroke();
 }
 
 function drawPlayer(cx, cy, bob) {
-    const y  = cy + bob;
-    const bw = TW * 0.14;
-    const bd = TH * 0.17;
-    const bH = TH * 0.92;
-    const hR = TW * 0.11;
-
-    ctx.beginPath();
-    ctx.ellipse(cx, y + bd * 0.4, bw * 1.5, bd * 0.72, 0, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(0,0,0,0.22)';
-    ctx.fill();
-
-    ctx.beginPath();
-    ctx.moveTo(cx + bw, y - bH);
-    ctx.lineTo(cx,      y + bd - bH);
-    ctx.lineTo(cx,      y + bd);
-    ctx.lineTo(cx + bw, y);
-    ctx.closePath();
-    ctx.fillStyle = '#c85030';
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(0,0,0,0.28)';
-    ctx.lineWidth = 0.5;
-    ctx.stroke();
-
-    ctx.beginPath();
-    ctx.moveTo(cx - bw, y - bH);
-    ctx.lineTo(cx,      y + bd - bH);
-    ctx.lineTo(cx,      y + bd);
-    ctx.lineTo(cx - bw, y);
-    ctx.closePath();
-    ctx.fillStyle = '#a03820';
-    ctx.fill();
-    ctx.stroke();
-
-    ctx.beginPath();
-    ctx.moveTo(cx,      y - bd - bH);
-    ctx.lineTo(cx + bw, y - bH);
-    ctx.lineTo(cx,      y + bd - bH);
-    ctx.lineTo(cx - bw, y - bH);
-    ctx.closePath();
-    ctx.fillStyle = '#e06840';
-    ctx.fill();
-    ctx.stroke();
-
-    const headY = y - bd - bH - hR * 1.05;
-    ctx.beginPath();
-    ctx.arc(cx, headY, hR, 0, Math.PI * 2);
-    ctx.fillStyle = '#efc070';
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(0,0,0,0.2)';
-    ctx.lineWidth = 0.5;
-    ctx.stroke();
-
-    ctx.beginPath();
-    ctx.ellipse(cx, headY - hR * 0.32, hR * 1.68, hR * 0.42, 0, 0, Math.PI * 2);
-    ctx.fillStyle = '#4e2a10';
-    ctx.fill();
-
-    ctx.beginPath();
-    ctx.moveTo(cx - hR * 0.74, headY - hR * 0.32);
-    ctx.lineTo(cx - hR * 0.56, headY - hR * 1.80);
-    ctx.lineTo(cx + hR * 0.56, headY - hR * 1.80);
-    ctx.lineTo(cx + hR * 0.74, headY - hR * 0.32);
-    ctx.closePath();
-    ctx.fillStyle = '#6a3e1c';
-    ctx.fill();
-
-    ctx.strokeStyle = '#d09038';
-    ctx.lineWidth = Math.max(0.8, hR * 0.22);
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(cx - hR * 0.70, headY - hR * 0.54);
-    ctx.lineTo(cx + hR * 0.70, headY - hR * 0.54);
-    ctx.stroke();
+  const y=cy+bob, bw=TW*0.14, bd=TH*0.17, bH=TH*0.92, hR=TW*0.11;
+  ctx.beginPath(); ctx.ellipse(cx,y+bd*0.4,bw*1.5,bd*0.72,0,0,Math.PI*2);
+  ctx.fillStyle='rgba(0,0,0,0.22)'; ctx.fill();
+  const faces=[
+    {pts:[[cx+bw,y-bH],[cx,y+bd-bH],[cx,y+bd],[cx+bw,y]],fill:'#c85030'},
+    {pts:[[cx-bw,y-bH],[cx,y+bd-bH],[cx,y+bd],[cx-bw,y]],fill:'#a03820'},
+    {pts:[[cx,y-bd-bH],[cx+bw,y-bH],[cx,y+bd-bH],[cx-bw,y-bH]],fill:'#e06840'},
+  ];
+  for (const {pts,fill} of faces) {
+    ctx.beginPath(); ctx.moveTo(pts[0][0],pts[0][1]);
+    for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0],pts[i][1]);
+    ctx.closePath(); ctx.fillStyle=fill; ctx.fill();
+    ctx.strokeStyle='rgba(0,0,0,0.28)'; ctx.lineWidth=0.5; ctx.stroke();
+  }
+  const headY=y-bd-bH-hR*1.05;
+  ctx.beginPath(); ctx.arc(cx,headY,hR,0,Math.PI*2); ctx.fillStyle='#efc070'; ctx.fill();
+  ctx.strokeStyle='rgba(0,0,0,0.2)'; ctx.lineWidth=0.5; ctx.stroke();
+  ctx.beginPath(); ctx.ellipse(cx,headY-hR*0.32,hR*1.68,hR*0.42,0,0,Math.PI*2); ctx.fillStyle='#4e2a10'; ctx.fill();
+  ctx.beginPath(); ctx.moveTo(cx-hR*0.74,headY-hR*0.32); ctx.lineTo(cx-hR*0.56,headY-hR*1.80); ctx.lineTo(cx+hR*0.56,headY-hR*1.80); ctx.lineTo(cx+hR*0.74,headY-hR*0.32); ctx.closePath(); ctx.fillStyle='#6a3e1c'; ctx.fill();
+  ctx.strokeStyle='#d09038'; ctx.lineWidth=Math.max(0.8,hR*0.22); ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(cx-hR*0.70,headY-hR*0.54); ctx.lineTo(cx+hR*0.70,headY-hR*0.54); ctx.stroke();
 }
 
 function drawHUD() {
-    const pad   = 10;
-    const fSize = Math.max(12, Math.min(16, TW * 0.22));
-    ctx.save();
-    ctx.fillStyle   = 'rgba(0,0,0,0.50)';
-    ctx.strokeStyle = 'rgba(255,200,80,0.30)';
-    ctx.lineWidth   = 1;
-    const hudW = fSize * 11;
-    const hudH = fSize * 2.8;
-    ctx.beginPath();
-    ctx.roundRect(pad, pad, hudW, hudH, 8);
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle    = '#ffd898';
-    ctx.font         = `bold ${fSize}px monospace`;
-    ctx.textBaseline = 'middle';
-    ctx.fillText(`Tile  (${player.col}, ${player.row})`, pad + 10, pad + hudH * 0.32);
-    ctx.fillStyle = 'rgba(255,210,140,0.70)';
-    ctx.font      = `${fSize * 0.82}px monospace`;
-    ctx.fillText('Tap any tile to move', pad + 10, pad + hudH * 0.75);
-    ctx.restore();
+  const pad=10, fSize=Math.max(12,Math.min(16,TW*0.22));
+  ctx.save();
+  ctx.fillStyle='rgba(0,0,0,0.50)'; ctx.strokeStyle='rgba(255,200,80,0.30)'; ctx.lineWidth=1;
+  const hudW=fSize*11, hudH=fSize*2.8;
+  ctx.beginPath(); ctx.roundRect(pad,pad,hudW,hudH,8); ctx.fill(); ctx.stroke();
+  ctx.fillStyle='#ffd898'; ctx.font=`bold ${fSize}px monospace`; ctx.textBaseline='middle';
+  ctx.fillText(`Tile  (${player.col}, ${player.row})`,pad+10,pad+hudH*0.32);
+  ctx.fillStyle='rgba(255,210,140,0.70)'; ctx.font=`${fSize*0.82}px monospace`;
+  ctx.fillText('Tap any tile to move',pad+10,pad+hudH*0.75);
+  ctx.restore();
 }
 
-let lastTime = 0;
-
+let lastTime=0;
 function update(dt) {
-    pulseT += dt;
-    player.bobPhase += dt * (player.moving ? 9 : 2.2);
-    if (!player.moving) return;
-    const dx   = player.tx - player.x;
-    const dy   = player.ty - player.y;
-    const dist = Math.hypot(dx, dy);
-    const step = player.speed * dt;
-    if (dist <= step) {
-        player.x   = player.tx;
-        player.y   = player.ty;
-        player.col = player.targetCol;
-        player.row = player.targetRow;
-        player.moving = false;
-    } else {
-        player.x += (dx / dist) * step;
-        player.y += (dy / dist) * step;
-    }
+  pulseT+=dt; player.bobPhase+=dt*(player.moving?9:2.2);
+  if (!player.moving) return;
+  const dx=player.tx-player.x, dy=player.ty-player.y;
+  const dist=Math.hypot(dx,dy), step=player.speed*dt;
+  if (dist<=step) { player.x=player.tx; player.y=player.ty; player.col=player.targetCol; player.row=player.targetRow; player.moving=false; }
+  else { player.x+=dx/dist*step; player.y+=dy/dist*step; }
 }
 
 function render() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    drawBackground();
-    for (let d = 0; d < COLS + ROWS - 1; d++) {
-        const cMin = Math.max(0, d - ROWS + 1);
-        const cMax = Math.min(COLS - 1, d);
-        for (let c = cMin; c <= cMax; c++) {
-            const r = d - c;
-            const isHovered = c === hoveredCol && r === hoveredRow;
-            const isTarget  = c === player.targetCol && r === player.targetRow && player.moving;
-            drawTile(c, r, isHovered);
-            drawTileDetail(c, r);
-            if (isTarget) drawTargetMarker(c, r);
-        }
+  ctx.clearRect(0,0,canvas.width,canvas.height); drawBackground();
+  for (let d=0;d<COLS+ROWS-1;d++) {
+    for (let c=Math.max(0,d-ROWS+1);c<=Math.min(COLS-1,d);c++) {
+      const r=d-c;
+      drawTile(c,r,c===hoveredCol&&r===hoveredRow);
+      drawTileDetail(c,r);
+      if (c===player.targetCol&&r===player.targetRow&&player.moving) drawTargetMarker(c,r);
     }
-    const bob = Math.sin(player.bobPhase) * (player.moving ? TH * 0.07 : TH * 0.028);
-    drawPlayer(player.x, player.y, bob);
-    drawHUD();
+  }
+  drawPlayer(player.x,player.y,Math.sin(player.bobPhase)*(player.moving?TH*0.07:TH*0.028));
+  drawHUD();
 }
 
-function loop(timestamp) {
-    const dt = Math.min(0.05, (timestamp - lastTime) / 1000);
-    lastTime  = timestamp;
-    update(dt);
-    render();
-    requestAnimationFrame(loop);
+function loop(ts) { const dt=Math.min(0.05,(ts-lastTime)/1000); lastTime=ts; update(dt); render(); requestAnimationFrame(loop); }
+
+function handlePointer(sx,sy) {
+  const {col,row}=screenToGrid(sx,sy), c=Math.floor(col), r=Math.floor(row);
+  if (!inBounds(c,r)) return;
+  player.targetCol=c; player.targetRow=r;
+  const tc=tileCenter(c,r); player.tx=tc.x; player.ty=tc.y;
+  player.moving=!(c===player.col&&r===player.row);
+}
+function handleHover(sx,sy) {
+  const {col,row}=screenToGrid(sx,sy), c=Math.floor(col), r=Math.floor(row);
+  hoveredCol=inBounds(c,r)?c:-1; hoveredRow=inBounds(c,r)?r:-1;
 }
 
-function handlePointer(sx, sy) {
-    const { col, row } = screenToGrid(sx, sy);
-    const c = Math.floor(col);
-    const r = Math.floor(row);
-    if (!inBounds(c, r)) return;
-    player.targetCol = c;
-    player.targetRow = r;
-    const tc = tileCenter(c, r);
-    player.tx = tc.x;
-    player.ty = tc.y;
-    player.moving = !(c === player.col && r === player.row);
-}
-
-function handleHover(sx, sy) {
-    const { col, row } = screenToGrid(sx, sy);
-    const c = Math.floor(col);
-    const r = Math.floor(row);
-    hoveredCol = inBounds(c, r) ? c : -1;
-    hoveredRow = inBounds(c, r) ? r : -1;
-}
-
-canvas.addEventListener('click', e => handlePointer(e.clientX, e.clientY));
-canvas.addEventListener('mousemove', e => handleHover(e.clientX, e.clientY));
-canvas.addEventListener('mouseleave', () => { hoveredCol = -1; hoveredRow = -1; });
-
-canvas.addEventListener('touchstart', e => {
-    e.preventDefault();
-    const t = e.changedTouches[0];
-    handlePointer(t.clientX, t.clientY);
-}, { passive: false });
-
-canvas.addEventListener('touchmove', e => {
-    e.preventDefault();
-    const t = e.changedTouches[0];
-    handleHover(t.clientX, t.clientY);
-}, { passive: false });
-
-canvas.addEventListener('touchend', e => { e.preventDefault(); }, { passive: false });
+canvas.addEventListener('click',e=>handlePointer(e.clientX,e.clientY));
+canvas.addEventListener('mousemove',e=>handleHover(e.clientX,e.clientY));
+canvas.addEventListener('mouseleave',()=>{hoveredCol=-1;hoveredRow=-1;});
+canvas.addEventListener('touchstart',e=>{e.preventDefault();const t=e.changedTouches[0];handlePointer(t.clientX,t.clientY);},{passive:false});
+canvas.addEventListener('touchmove',e=>{e.preventDefault();const t=e.changedTouches[0];handleHover(t.clientX,t.clientY);},{passive:false});
+canvas.addEventListener('touchend',e=>{e.preventDefault();},{passive:false});
 
 resize();
-const initCenter = tileCenter(player.col, player.row);
-player.x  = initCenter.x;
-player.y  = initCenter.y;
-player.tx = initCenter.x;
-player.ty = initCenter.y;
-
-requestAnimationFrame(ts => { lastTime = ts; requestAnimationFrame(loop); });
+const ic=tileCenter(player.col,player.row);
+player.x=ic.x; player.y=ic.y; player.tx=ic.x; player.ty=ic.y;
+requestAnimationFrame(ts=>{lastTime=ts;requestAnimationFrame(loop);});
   </script>
 </body>
 </html>
