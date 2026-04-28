@@ -62,19 +62,17 @@ function resize() {
     canvas.width  = window.innerWidth;
     canvas.height = window.innerHeight;
 
-    // Compute the largest TW that keeps the grid on screen with padding.
     // Grid screen-width  = (COLS + ROWS - 2) * TW/2
-    // Grid screen-height = (COLS + ROWS)     * TH/2  where TH = TW/2
-    //                    = (COLS + ROWS)     * TW/4
+    // Grid screen-height = (COLS + ROWS) * TH/2 + SW   where SW = TH*0.5 = TW*0.25
+    //                    = TW * (COLS + ROWS + 1) / 4
     const fitByW = (canvas.width  - 48) * 2 / (COLS + ROWS - 2);
-    const fitByH = (canvas.height - 96) * 4 / (COLS + ROWS);
+    const fitByH = (canvas.height - 96) * 4 / (COLS + ROWS + 1);
     const raw    = Math.floor(Math.min(fitByW, fitByH));
-    TW = raw % 2 === 0 ? raw : raw - 1;   // keep even for pixel-clean diamonds
+    TW = raw % 2 === 0 ? raw : raw - 1;
     TH = TW >> 1;
 
-    // Centre the grid horizontally; leave room for HUD at top.
     OX = canvas.width * 0.5;
-    OY = (canvas.height - TH * (COLS + ROWS) * 0.5) * 0.5 + 16;
+    OY = (canvas.height - TH * (COLS + ROWS + 1) * 0.5) * 0.5 + 16;
 
     // Sync player screen position after resize.
     const pc = tileCenter(player.col, player.row);
@@ -100,10 +98,10 @@ const SEED = Array.from({ length: ROWS }, (_, r) =>
     Array.from({ length: COLS }, (_, c) => ((r * 97 + c * 61 + 13) % 100) / 100)
 );
 
-// Tile surface colour palettes  { top, shadeL, shadeR }
+// Tile colour palettes: top face, left wall, right wall
 const PAL = {
-    0: { top: '#c8a06a', shadeL: '#9a7040', shadeR: '#b28448' },   // sand
-    1: { top: '#a07848', shadeL: '#785030', shadeR: '#906238' },   // dirt path
+    0: { top: '#c8a06a', left: '#7a5530', right: '#9a6e3a' },   // sand
+    1: { top: '#a07848', left: '#5c3820', right: '#7a5030' },   // dirt path
 };
 
 // ── Player ─────────────────────────────────────────────────────────────────────
@@ -134,23 +132,65 @@ function drawBackground() {
 }
 
 /**
- * Draw one isometric tile (flat top-face diamond only).
- * highlight = true  ⟹ tile is hovered / selected.
+ * Draw one isometric tile with 3 visible faces:
+ *   top (diamond), left wall, right wall.
+ *
+ * Side-wall height SW = TH * 0.5.  Walls extend downward in screen space.
+ *
+ *   Top face vertices (top vertex at screen pos x,y):
+ *     top   = (x,      y      )
+ *     right = (x + hw, y + hh )
+ *     front = (x,      y + TH )   ← nearest to viewer
+ *     left  = (x - hw, y + hh )
+ *
+ *   Left wall  : left → front (top edge) and left+SW → front+SW (bottom edge)
+ *   Right wall : right → front (top edge) and right+SW → front+SW (bottom edge)
  */
 function drawTile(col, row, highlight) {
     const { x, y } = gridToScreen(col, row);
-    const hw = TW * 0.5;
-    const hh = TH * 0.5;
+    const hw  = TW * 0.5;
+    const hh  = TH * 0.5;
+    const sw  = TH * 0.5;    // side wall height
     const pal = PAL[tileMap[row][col]] ?? PAL[0];
 
+    const topColor   = highlight ? '#ddc070' : pal.top;
+    const leftColor  = highlight ? '#a08828' : pal.left;
+    const rightColor = highlight ? '#bfa030' : pal.right;
+
+    // ── Left wall ─────────────────────────────────────────────────────────────
+    ctx.beginPath();
+    ctx.moveTo(x - hw, y + hh);
+    ctx.lineTo(x,      y + TH);
+    ctx.lineTo(x,      y + TH + sw);
+    ctx.lineTo(x - hw, y + hh + sw);
+    ctx.closePath();
+    ctx.fillStyle   = leftColor;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+    ctx.lineWidth   = 0.5;
+    ctx.stroke();
+
+    // ── Right wall ────────────────────────────────────────────────────────────
+    ctx.beginPath();
+    ctx.moveTo(x + hw, y + hh);
+    ctx.lineTo(x,      y + TH);
+    ctx.lineTo(x,      y + TH + sw);
+    ctx.lineTo(x + hw, y + hh + sw);
+    ctx.closePath();
+    ctx.fillStyle   = rightColor;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+    ctx.lineWidth   = 0.5;
+    ctx.stroke();
+
+    // ── Top face (drawn last — caps the walls cleanly) ────────────────────────
     ctx.beginPath();
     ctx.moveTo(x,       y);
     ctx.lineTo(x + hw,  y + hh);
     ctx.lineTo(x,       y + TH);
     ctx.lineTo(x - hw,  y + hh);
     ctx.closePath();
-
-    ctx.fillStyle   = highlight ? '#ddc070' : pal.top;
+    ctx.fillStyle   = topColor;
     ctx.fill();
     ctx.strokeStyle = 'rgba(0,0,0,0.18)';
     ctx.lineWidth   = 0.5;
