@@ -40,6 +40,34 @@ function tileRawCenter(col, row) {
     };
 }
 
+// ── Walkability map ────────────────────────────────────────────────────────────
+// 0 = open ground/path, 1 = blocked (building / cliff)
+// 20×20 grid. Tile (col,row) image-centre: x=(col-row+19)/38*1408, y=(col+row)/40*768
+// Buildings identified from reference image and mapped with that formula.
+const walkMap = [
+//    0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19
+    [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1], // row  0 — rocky cliffs upper-right
+    [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1], // row  1
+    [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0], // row  2
+    [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0], // row  3
+    [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0], // row  4
+    [ 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0], // row  5 — General Store + Blacksmith start
+    [ 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0], // row  6
+    [ 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0], // row  7
+    [ 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0], // row  8
+    [ 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0], // row  9 — General Store ends
+    [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0], // row 10 — open street, Blacksmith tail
+    [ 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0], // row 11 — Saloon starts
+    [ 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], // row 12
+    [ 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], // row 13
+    [ 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], // row 14
+    [ 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], // row 15
+    [ 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], // row 16 — Saloon + left shed
+    [ 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], // row 17 — left shed tail
+    [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], // row 18 — open ground
+    [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], // row 19
+];
+
 // ── Player ─────────────────────────────────────────────────────────────────────
 const player = {
     col: 10, row: 10,
@@ -114,6 +142,7 @@ function drawTile(col, row, highlight) {
     if (x + TW < 0 || x - TW > canvas.width ||
         y + TH < 0 || y - TH > canvas.height) return;
     const hw = TW * 0.5, hh = TH * 0.5;
+    const blocked = walkMap[row][col];
     ctx.beginPath();
     ctx.moveTo(x,      y);
     ctx.lineTo(x + hw, y + hh);
@@ -121,15 +150,17 @@ function drawTile(col, row, highlight) {
     ctx.lineTo(x - hw, y + hh);
     ctx.closePath();
     if (highlight) {
-        ctx.fillStyle   = 'rgba(255,220,80,0.30)';
-        ctx.strokeStyle = 'rgba(255,200,60,0.80)';
+        // Gold = walkable hover, red = blocked hover
+        ctx.fillStyle   = blocked ? 'rgba(200,40,40,0.28)' : 'rgba(255,220,80,0.30)';
+        ctx.strokeStyle = blocked ? 'rgba(220,60,60,0.75)' : 'rgba(255,200,60,0.80)';
         ctx.lineWidth   = 1.5;
         ctx.fill();
+        ctx.stroke();
     } else {
-        ctx.strokeStyle = 'rgba(0,0,0,0.15)';
-        ctx.lineWidth   = 0.8;
+        ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+        ctx.lineWidth   = 0.6;
+        ctx.stroke();
     }
-    ctx.stroke();
 }
 
 function drawTargetMarker(col, row) {
@@ -259,7 +290,7 @@ function loop(ts) {
 function handlePointer(sx, sy) {
     const { col, row } = screenToGrid(sx, sy);
     const c = Math.floor(col), r = Math.floor(row);
-    if (!inBounds(c, r)) return;
+    if (!inBounds(c, r) || walkMap[r][c]) return;
     player.targetCol = c; player.targetRow = r;
     const tc = tileRawCenter(c, r);
     player.tRawX = tc.x; player.tRawY = tc.y;
